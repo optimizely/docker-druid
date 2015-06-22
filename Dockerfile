@@ -1,15 +1,7 @@
-FROM ubuntu:14.04
+FROM quay.io/optimizely/java:oracle-java8
 
-# Add Java 8 repository
+# Update packages
 RUN apt-get update
-RUN apt-get install -y software-properties-common
-RUN apt-add-repository -y ppa:webupd8team/java \
-      && apt-get update
-
-# Oracle Java 8
-RUN echo oracle-java-8-installer shared/accepted-oracle-license-v1-1 select true | /usr/bin/debconf-set-selections \
-      && apt-get install -y oracle-java8-installer \
-      && apt-get install -y oracle-java8-set-default
 
 # MySQL (Metadata store)
 RUN apt-get install -y mysql-server
@@ -36,17 +28,22 @@ RUN adduser --system --group --no-create-home druid \
       && chown druid:druid /var/lib/druid
 
 # Pre-cache Druid dependencies (this step is optional, but can help speed up re-building the Docker image)
-RUN mvn dependency:get -Dartifact=io.druid:druid-services:0.7.2
+RUN mvn dependency:get -Dartifact=io.druid:druid-services:0.7.3
 
+##################################################
 # Druid (release tarball)
-#ENV DRUID_VERSION 0.7.1.1
-#RUN wget -q -O - http://static.druid.io/artifacts/releases/druid-services-$DRUID_VERSION-bin.tar.gz | tar -xzf - -C /usr/local
-#RUN ln -s /usr/local/druid-services-$DRUID_VERSION /usr/local/druid
+#
+#ENV DRUID_VERSION 0.7.3
+#RUN wget -q -O - http://static.druid.io/artifacts/releases/druid-$DRUID_VERSION-bin.tar.gz | tar -xzf - -C /usr/local
+#RUN ln -s /usr/local/druid-$DRUID_VERSION /usr/local/druid
 
+##################################################
 # Druid (from source)
+#
 RUN mkdir -p /usr/local/druid/lib /usr/local/druid/repository
+
 # whichever github owner (user or org name) you would like to build from
-ENV GITHUB_OWNER druid-io
+ENV GITHUB_OWNER optimizely
 # whichever branch you would like to build
 ENV DRUID_VERSION master
 
@@ -55,30 +52,30 @@ ADD https://api.github.com/repos/$GITHUB_OWNER/druid/git/refs/heads/$DRUID_VERSI
 RUN git clone -q --branch $DRUID_VERSION --depth 1 https://github.com/$GITHUB_OWNER/druid.git /tmp/druid
 WORKDIR /tmp/druid
 # package and install Druid locally
-# use versions-maven-plugin 2.1 to work around https://jira.codehaus.org/browse/MVERSIONS-285
-RUN mvn -U -B org.codehaus.mojo:versions-maven-plugin:2.1:set -DgenerateBackupPoms=false -DnewVersion=$DRUID_VERSION \
-  && mvn -U -B clean install -DskipTests=true -Dmaven.javadoc.skip=true \
-  && cp services/target/druid-services-$DRUID_VERSION-selfcontained.jar /usr/local/druid/lib
+RUN mvn -U -B clean install -DskipTests=true -Dmaven.javadoc.skip=true \
+  && cp services/target/druid-services-*-selfcontained.jar /usr/local/druid/lib
+##################################################
 
 # pull dependencies for Druid extensions
-RUN java "-Ddruid.extensions.coordinates=[\"io.druid.extensions:druid-s3-extensions\",\"io.druid.extensions:mysql-metadata-storage\"]" \
+RUN java -Ddruid.extensions.coordinates=[\"io.druid.extensions:druid-hdfs-storage\",\"io.druid.extensions:mysql-metadata-storage\"] \
       -Ddruid.extensions.localRepository=/usr/local/druid/repository \
       -Ddruid.extensions.remoteRepositories=[\"file:///root/.m2/repository/\",\"https://repo1.maven.org/maven2/\"] \
-      -cp /usr/local/druid/lib/* \
+      -cp "/usr/local/druid/lib/*" \
       io.druid.cli.Main tools pull-deps
+
+# Druid may need to touch some files in there
+RUN chown -R druid:druid /usr/local/druid/repository
 
 WORKDIR /
 
 # Setup metadata store
 RUN /etc/init.d/mysql start && mysql -u root -e "GRANT ALL ON druid.* TO 'druid'@'localhost' IDENTIFIED BY 'diurd'; CREATE database druid CHARACTER SET utf8;" && /etc/init.d/mysql stop
 
-# Add sample data
-RUN /etc/init.d/mysql start && java -cp /usr/local/druid/lib/druid-services-*-selfcontained.jar -Ddruid.extensions.coordinates=[\"io.druid.extensions:mysql-metadata-storage\"] -Ddruid.metadata.storage.type=mysql io.druid.cli.Main tools metadata-init --connectURI="jdbc:mysql://localhost:3306/druid" --user=druid --password=diurd && /etc/init.d/mysql stop
-ADD sample-data.sql sample-data.sql
-RUN /etc/init.d/mysql start && cat sample-data.sql | mysql -u root druid && /etc/init.d/mysql stop
-
 # Setup supervisord
 ADD supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Add Yarn conf
+ADD yarn-conf /etc/hadoop/conf/
 
 # Clean up
 RUN apt-get clean && rm -rf /tmp/* /var/tmp/*
@@ -87,11 +84,13 @@ RUN apt-get clean && rm -rf /tmp/* /var/tmp/*
 # - 8081: HTTP (coordinator)
 # - 8082: HTTP (broker)
 # - 8083: HTTP (historical)
+# - 8090: HTTP (overlord)
 # - 3306: MySQL
 # - 2181 2888 3888: ZooKeeper
 EXPOSE 8081
 EXPOSE 8082
 EXPOSE 8083
+EXPOSE 8090
 EXPOSE 3306
 EXPOSE 2181 2888 3888
 
