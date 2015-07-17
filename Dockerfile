@@ -28,7 +28,7 @@ RUN adduser --system --group --no-create-home druid \
       && chown druid:druid /var/lib/druid
 
 # Pre-cache Druid dependencies (this step is optional, but can help speed up re-building the Docker image)
-RUN mvn dependency:get -Dartifact=io.druid:druid-services:0.7.3
+RUN mvn dependency:get -Dartifact=io.druid:druid-services:0.8.0
 
 ##################################################
 # Druid (release tarball)
@@ -45,7 +45,7 @@ RUN mkdir -p /usr/local/druid/lib /usr/local/druid/repository
 # whichever github owner (user or org name) you would like to build from
 ENV GITHUB_OWNER optimizely
 # whichever branch you would like to build
-ENV DRUID_VERSION master
+ENV DRUID_VERSION optimizely
 
 # trigger rebuild only if branch changed
 ADD https://api.github.com/repos/$GITHUB_OWNER/druid/git/refs/heads/$DRUID_VERSION druid-version.json
