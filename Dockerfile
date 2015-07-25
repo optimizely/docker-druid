@@ -1,13 +1,9 @@
 FROM quay.io/optimizely/java:oracle-java8
 
-# Update packages
-RUN apt-get update
-
-# MySQL (Metadata store)
-RUN apt-get install -y mysql-server
-
-# Supervisor
-RUN apt-get install -y supervisor
+# Install packages
+RUN apt-get update \
+      && apt-get install -y git mysql-server supervisor \
+      && apt-get clean
 
 # Maven
 RUN wget -q -O - http://archive.apache.org/dist/maven/maven-3/3.2.5/binaries/apache-maven-3.2.5-bin.tar.gz | tar -xzf - -C /usr/local \
@@ -18,9 +14,6 @@ RUN wget -q -O - http://archive.apache.org/dist/maven/maven-3/3.2.5/binaries/apa
 RUN wget -q -O - http://www.us.apache.org/dist/zookeeper/zookeeper-3.4.6/zookeeper-3.4.6.tar.gz | tar -xzf - -C /usr/local \
       && cp /usr/local/zookeeper-3.4.6/conf/zoo_sample.cfg /usr/local/zookeeper-3.4.6/conf/zoo.cfg \
       && ln -s /usr/local/zookeeper-3.4.6 /usr/local/zookeeper
-
-# git
-RUN apt-get install -y git
 
 # Druid system user
 RUN adduser --system --group --no-create-home druid \
@@ -40,7 +33,8 @@ RUN mvn dependency:get -Dartifact=io.druid:druid-services:0.8.0
 ##################################################
 # Druid (from source)
 #
-RUN mkdir -p /usr/local/druid/lib /usr/local/druid/repository
+RUN mkdir -p /usr/local/druid/lib /usr/local/druid/repository \
+      && chown druid:druid /usr/local/druid/repository
 
 # whichever github owner (user or org name) you would like to build from
 ENV GITHUB_OWNER optimizely
@@ -49,22 +43,22 @@ ENV DRUID_VERSION optimizely
 
 # trigger rebuild only if branch changed
 ADD https://api.github.com/repos/$GITHUB_OWNER/druid/git/refs/heads/$DRUID_VERSION druid-version.json
-RUN git clone -q --branch $DRUID_VERSION --depth 1 https://github.com/$GITHUB_OWNER/druid.git /tmp/druid
-WORKDIR /tmp/druid
-# package and install Druid locally
-RUN mvn -U -B clean install -DskipTests=true -Dmaven.javadoc.skip=true \
-  && cp services/target/druid-services-*-selfcontained.jar /usr/local/druid/lib
+
+# clone, package and install Druid locally
+RUN git clone -q --branch $DRUID_VERSION --depth 1 https://github.com/$GITHUB_OWNER/druid.git /tmp/druid \
+      && cd /tmp/druid \
+      && mvn -U -B clean install -DskipTests=true -Dmaven.javadoc.skip=true \
+      && cp services/target/druid-services-*-selfcontained.jar /usr/local/druid/lib \
+      && cd / \
+      && rm -fr /tmp/druid
 ##################################################
 
 # pull dependencies for Druid extensions
-RUN java -Ddruid.extensions.coordinates=[\"io.druid.extensions:druid-hdfs-storage\",\"io.druid.extensions:mysql-metadata-storage\"] \
+RUN sudo -u druid java -Ddruid.extensions.coordinates=[\"io.druid.extensions:druid-hdfs-storage\",\"io.druid.extensions:mysql-metadata-storage\"] \
       -Ddruid.extensions.localRepository=/usr/local/druid/repository \
       -Ddruid.extensions.remoteRepositories=[\"file:///root/.m2/repository/\",\"https://repo1.maven.org/maven2/\"] \
       -cp "/usr/local/druid/lib/*" \
       io.druid.cli.Main tools pull-deps
-
-# Druid may need to touch some files in there
-RUN chown -R druid:druid /usr/local/druid/repository
 
 WORKDIR /
 
@@ -76,9 +70,6 @@ ADD supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Add Yarn conf
 ADD yarn-conf /etc/hadoop/conf/
-
-# Clean up
-RUN apt-get clean && rm -rf /tmp/* /var/tmp/*
 
 # Expose ports:
 # - 8081: HTTP (coordinator)
