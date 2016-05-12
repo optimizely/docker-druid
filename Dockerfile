@@ -71,6 +71,10 @@ ADD supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 # Add Yarn conf
 ADD yarn-conf /etc/hadoop/conf/
 
+# Druid overlord may be stuck in a bad state if mysql is not ready.
+# We'll delay the start of all druid services using this script.
+ADD delay-start.sh /usr/local/bin/
+
 # Expose ports:
 # - 8081: HTTP (coordinator)
 # - 8082: HTTP (broker)
