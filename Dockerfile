@@ -66,14 +66,10 @@ WORKDIR /
 RUN /etc/init.d/mysql start && mysql -u root -e "GRANT ALL ON druid.* TO 'druid'@'localhost' IDENTIFIED BY 'diurd'; CREATE database druid CHARACTER SET utf8;" && /etc/init.d/mysql stop
 
 # Setup supervisord
-ADD supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+ADD supervisord.conf /etc/supervisor/conf.d/druid.conf
 
 # Add Yarn conf
 ADD yarn-conf /etc/hadoop/conf/
-
-# Druid overlord may be stuck in a bad state if mysql is not ready.
-# We'll delay the start of all druid services using this script.
-ADD delay-start.sh /usr/local/bin/
 
 # Expose ports:
 # - 8081: HTTP (coordinator)
@@ -90,4 +86,6 @@ EXPOSE 3306
 EXPOSE 2181 2888 3888
 
 WORKDIR /var/lib/druid
-ENTRYPOINT export HOSTIP="$(resolveip -s $HOSTNAME)" && exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+ADD start.sh .
+
+ENTRYPOINT ["./start.sh"]
